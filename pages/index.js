@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { useRouter } from 'next/router';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import { addDays } from 'date-fns';
 
-export default function Home() {
-  const [rooms, setRooms] = useState([]); // List of rooms
-  const [selectedRoom, setSelectedRoom] = useState(null); // Selected room for booking
+export default function BookingPage() {
+  const [rooms, setRooms] = useState([]);
+  const [selectedRoom, setSelectedRoom] = useState(null); // Room currently selected for booking
+  const [bookedDates, setBookedDates] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -12,81 +16,81 @@ export default function Home() {
     checkIn: '',
     checkOut: '',
   });
-  const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState(null);
-  const router = useRouter();
 
-  // Check user session on page load
+  // Fetch all available rooms on page load
   useEffect(() => {
-    const getSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
-        router.push('/auth'); // Redirect unauthenticated users
+    const fetchRooms = async () => {
+      const { data, error } = await supabase.from('rooms').select('*');
+      if (error) {
+        console.error('Error fetching rooms:', error.message);
       } else {
-        setSession(data.session);
-        fetchRooms();
+        setRooms(data);
       }
       setLoading(false);
     };
 
-    getSession();
-  }, [router]);
+    fetchRooms();
+  }, []);
 
-  // Fetch rooms from Supabase
-  async function fetchRooms() {
-    const { data, error } = await supabase.from('rooms').select('*');
-    if (error) console.log('Error:', error.message);
-    else setRooms(data);
-  }
+  // Fetch booked dates for a selected room
+  useEffect(() => {
+    if (selectedRoom) {
+      const fetchBookedDates = async () => {
+        const { data, error } = await supabase
+          .from('bookings')
+          .select('check_in, check_out')
+          .eq('room_id', selectedRoom.id);
 
-  // Handle input changes for the booking form
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
+        if (!error) {
+          const dates = [];
+          data.forEach((booking) => {
+            let current = new Date(booking.check_in);
+            const end = new Date(booking.check_out);
+            while (current <= end) {
+              dates.push(new Date(current));
+              current.setDate(current.getDate() + 1);
+            }
+          });
+          setBookedDates(dates);
+        }
+      };
 
-  // Confirm booking submission
+      fetchBookedDates();
+    }
+  }, [selectedRoom]);
+
+  // Handle booking form submission
   const handleBooking = async () => {
     if (!formData.name || !formData.email || !formData.phone || !formData.checkIn || !formData.checkOut) {
       alert('Please fill in all fields.');
       return;
     }
-  
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      alert('User not authenticated. Please log in again.');
-      router.push('/auth');
+
+    const overlapping = bookedDates.some(
+      (date) =>
+        new Date(date) >= new Date(formData.checkIn) &&
+        new Date(date) <= new Date(formData.checkOut)
+    );
+
+    if (overlapping) {
+      alert('The selected dates are already booked. Please choose different dates.');
       return;
     }
-  
-    // Log the payload to debug
-    console.log('Payload being sent:', {
-      room_id: selectedRoom.id,
-      user_id: user.id,
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone,
-      check_in: formData.checkIn,
-      check_out: formData.checkOut,
-      status: 'pending',
-    });
-  
+
     const { error } = await supabase.from('bookings').insert([
       {
         room_id: selectedRoom.id,
-        user_id: user.id,
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
-        check_in: formData.checkIn,
-        check_out: formData.checkOut,
+        check_in: formData.checkIn.toISOString(),
+        check_out: formData.checkOut.toISOString(),
         status: 'pending',
       },
     ]);
-  
+
     if (error) {
-      console.error('Supabase Insert Error:', error.message);
-      alert('Error booking the room: ' + error.message);
+      alert('Error booking the room. Please try again.');
     } else {
       alert('Room booked successfully!');
       setSelectedRoom(null);
@@ -94,20 +98,20 @@ export default function Home() {
     }
   };
 
-  if (loading) {
-    return <div className="p-8">Loading...</div>;
-  }
+  if (loading) return <div className="p-8">Loading...</div>;
 
   return (
     <div>
-      {/* Main Content */}
       <div className="container mx-auto max-w-screen-xl p-4">
         <h1 className="text-3xl font-bold mb-8 text-center text-blue-800">Available Rooms</h1>
 
-        {/* Grid of Rooms */}
+        {/* Room Listing */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
           {rooms.map((room) => (
-            <div key={room.id} className="bg-blue-50 border border-blue-200 rounded-lg shadow-md overflow-hidden">
+            <div
+              key={room.id}
+              className="bg-blue-50 border border-blue-200 rounded-lg shadow-md overflow-hidden"
+            >
               <img
                 src={`https://unsplash.it/300/200?image=${room.id + 50}`}
                 alt={room.type}
@@ -128,62 +132,82 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Booking Form for Selected Room */}
+        {/* Booking Form */}
         {selectedRoom && (
-          <div className="mt-12 p-6 bg-blue-50 border border-blue-200 rounded-lg shadow-lg max-w-4xl mx-auto">
+          <div className="mt-12 p-6 bg-blue-100 border border-blue-200 rounded-lg shadow-lg max-w-4xl mx-auto">
             <h2 className="text-2xl font-bold text-blue-800 mb-4 text-center">
               Book a {selectedRoom.type} Room
             </h2>
             <p className="text-blue-600 mb-2 text-center">Price: €{selectedRoom.price} / day</p>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <input
                 type="text"
-                name="name"
                 placeholder="Your Name"
                 value={formData.name}
-                onChange={handleInputChange}
-                className="border border-blue-300 p-3 rounded w-full bg-white"
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="p-3 border rounded"
               />
               <input
                 type="email"
-                name="email"
                 placeholder="Your Email"
                 value={formData.email}
-                onChange={handleInputChange}
-                className="border border-blue-300 p-3 rounded w-full bg-white"
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                className="p-3 border rounded"
               />
               <input
                 type="tel"
-                name="phone"
                 placeholder="Your Phone"
                 value={formData.phone}
-                onChange={handleInputChange}
-                className="border border-blue-300 p-3 rounded w-full bg-white"
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                className="p-3 border rounded"
               />
-              <input
-                type="date"
-                name="checkIn"
-                value={formData.checkIn}
-                onChange={handleInputChange}
-                className="border border-blue-300 p-3 rounded w-full bg-white"
-              />
-              <input
-                type="date"
-                name="checkOut"
-                value={formData.checkOut}
-                onChange={handleInputChange}
-                className="border border-blue-300 p-3 rounded w-full bg-white"
-              />
+              <div>
+                <p className="text-blue-600 mb-1">Check-in Date:</p>
+                <DatePicker
+                  selected={formData.checkIn}
+                  onChange={(date) => setFormData({ ...formData, checkIn: date })}
+                  minDate={new Date()}
+                  excludeDates={bookedDates}
+                  placeholderText="Select Check-in Date"
+                  className="w-full p-3 border rounded"
+                  dayClassName={(date) => {
+                    // Check if the date is in the list of booked dates
+                    const isBooked = bookedDates.some(
+                      (bookedDate) => bookedDate.toDateString() === date.toDateString()
+                    );
+                    return isBooked ? 'line-through text-gray-400 cursor-not-allowed' : '';
+                  }}
+                />
+              </div>
+              <div>
+                <p className="text-blue-600 mb-1">Check-out Date:</p>
+                <DatePicker
+                  selected={formData.checkOut}
+                  onChange={(date) => setFormData({ ...formData, checkOut: date })}
+                  minDate={formData.checkIn || new Date()}
+                  excludeDates={bookedDates}
+                  placeholderText="Select Check-out Date"
+                  className="w-full p-3 border rounded"
+                  dayClassName={(date) => {
+                    const isBooked = bookedDates.some(
+                      (bookedDate) => bookedDate.toDateString() === date.toDateString()
+                    );
+                    return isBooked ? 'line-through text-gray-400 cursor-not-allowed' : '';
+                  }}
+                />
+              </div>
             </div>
+
             <button
               onClick={handleBooking}
-              className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-6 rounded transition w-full"
+              className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition w-full"
             >
               Confirm Booking
             </button>
             <button
               onClick={() => setSelectedRoom(null)}
-              className="mt-4 bg-gray-400 hover:bg-gray-500 text-white py-2 px-6 rounded transition w-full"
+              className="mt-4 bg-gray-400 hover:bg-gray-500 text-white py-2 px-4 rounded transition w-full"
             >
               Cancel
             </button>
