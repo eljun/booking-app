@@ -1,88 +1,106 @@
+'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import { format } from 'date-fns';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function MyBookingsList() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchBookings() {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('*, rooms(type, thumbnail_url, amenities, price)'); // Fetch room data including the thumbnail
-      if (error) {
-        console.error('Error fetching bookings:', error);
-      } else {
-        setBookings(data);
-      }
-      setLoading(false);
-    }
     fetchBookings();
   }, []);
 
-  if (loading) {
-    return <div className="text-center text-blue-600">Loading bookings...</div>;
+  async function fetchBookings() {
+    const { data: user, error: userError } = await supabase.auth.getUser();
+    if (userError || !user?.user) {
+      console.error('Error fetching user:', userError);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select(`
+        id, 
+        room_id, 
+        check_in, 
+        check_out,
+        rooms(price)
+      `)
+      .eq('user_id', user.user.id);
+
+    if (error) {
+      console.error('Error fetching bookings:', error);
+    } else {
+      setBookings(data);
+    }
+    setLoading(false);
   }
 
-  if (bookings.length === 0) {
-    return <div className="text-center text-gray-500">No bookings found.</div>;
-  }
+  const calculateSubtotal = (check_in, check_out, price) => {
+    const checkInDate = new Date(check_in);
+    const checkOutDate = new Date(check_out);
+    const days = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
+    return days * price;
+  };
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-      {bookings.map((booking) => (
-        <div
-          key={booking.id}
-          className="bg-white border border-gray-200 rounded-lg shadow-md overflow-hidden"
-        >
-          {/* Thumbnail */}
-          <img
-            src={booking.rooms.thumbnail_url || `https://unsplash.it/300/200?random=${booking.id}`} // Fallback image
-            alt={booking.rooms.type}
-            className="w-full h-40 object-cover"
-          />
+    <div className="container mx-auto p-6">
+      <h2 className="text-3xl font-bold mb-6 text-blue-700">My Bookings</h2>
+      {loading ? (
+        <p className="text-blue-500">Loading...</p>
+      ) : bookings.length === 0 ? (
+        <p className="text-gray-500 text-center">No bookings available.</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {bookings.map((booking) => {
+            const subtotal = calculateSubtotal(
+              booking.check_in,
+              booking.check_out,
+              booking.rooms?.price || 0
+            );
 
-          {/* Booking Info */}
-          <div className="p-4">
-            <h2 className="text-lg font-bold text-blue-800 mb-2">{booking.rooms.type} Room</h2>
-            <p className="text-gray-600 mb-2">
-              <strong>Check-in:</strong> {new Date(booking.check_in).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-            </p>
-            <p className="text-gray-600 mb-2">
-              <strong>Check-out:</strong> {new Date(booking.check_out).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-            </p>
-            <p className="text-gray-600 mb-2">
-              <strong>Price:</strong> €{booking.rooms.price} / night
-            </p>
-            <p className="text-gray-600 mb-4">
-              <strong>Amenities:</strong> {booking.rooms.amenities || 'N/A'}
-            </p>
-            <p className="text-gray-600">
-              <strong>Status:</strong>{' '}
-              <span
-                className={`font-bold ${
-                  booking.status === 'confirmed' ? 'text-green-600' : 'text-red-600'
-                }`}
+            return (
+              <div
+                key={booking.id}
+                className="rounded-lg border border-blue-200 shadow-md bg-blue-50 hover:shadow-lg transition-shadow"
               >
-                <p className="text-gray-600">
-                <strong>Status:</strong>{' '}
-                <span
-                    className={`font-bold ${
-                    booking.status === 'confirmed'
-                        ? 'text-green-600'
-                        : booking.status === 'pending'
-                        ? 'text-yellow-600'
-                        : 'text-red-600'
-                    }`}
-                >
-                    {booking.status ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1) : 'Unknown'}
-                </span>
-                </p>
-              </span>
-            </p>
-          </div>
+                <div className="p-5">
+                  {/* Room Image */}
+                  <img
+                    src="https://via.placeholder.com/300x200" // Placeholder image URL
+                    alt={`Room ${booking.room_id}`}
+                    className="w-full h-48 object-cover rounded-t"
+                  />
+                  <h3 className="text-lg font-semibold text-blue-700 mb-3">
+                    Room ID: {booking.room_id}
+                  </h3>
+                  <p className="text-sm text-blue-600 mb-1">
+                    Check-in Date: {format(new Date(booking.check_in), 'MMMM dd, yyyy')}
+                  </p>
+                  <p className="text-sm text-blue-600 mb-1">
+                    Check-out Date: {format(new Date(booking.check_out), 'MMMM dd, yyyy')}
+                  </p>
+                  <p className="text-sm text-blue-600 mb-1">
+                    Price per Day: €{booking.rooms?.price || 'N/A'}
+                  </p>
+                  <p className="text-blue-800 font-semibold">
+                    Subtotal: €{subtotal}
+                  </p>
+                  <button className="mt-4 bg-blue-700 text-white rounded-md py-2 px-4 hover:bg-blue-800 transition-colors">
+                    Cancel Booking
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      )}
     </div>
   );
 }
